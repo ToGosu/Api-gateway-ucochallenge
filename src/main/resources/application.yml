@@ -1,0 +1,42 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: api-gateway
+
+  cloud:
+    gateway:
+      globalcors:
+        corsConfigurations:
+          '[/**]':
+            allowedOrigins: "http://localhost:5173"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+
+      routes:
+        # Servicio de parámetros
+        - id: parameter-service
+          uri: http://localhost:8082
+          predicates:
+            - Path=/parameters/**
+          filters:
+            - RewritePath=/parameters/(?<segment>.*), /parameters/${segment}
+
+        # Servicio de usuarios (UcoChallenge)
+        - id: user-service
+          uri: http://localhost:8080
+          predicates:
+            - Path=/api/**
+          filters:
+            # 🔁 Reescribe /api/... → /uco-challenge/api/...
+            - RewritePath=/api/(?<segment>.*), /uco-challenge/api/${segment}
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://dev-l7bs34cafn0six34.us.auth0.com/
+          audiences:
+            - https://ucochallenge-api/
