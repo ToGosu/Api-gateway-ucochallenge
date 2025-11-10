@@ -1,0 +1,144 @@
+# Dockerfile alternativo para Nginx CON ModSecurity (WAF completo)
+# NOTA: Este Dockerfile requiere compilar Nginx con soporte para ModSecurity
+# Para uso en producción, considera usar una imagen pre-construida como:
+# - fholzer/nginx-brotli (con ModSecurity)
+# - o construir desde fuente
+
+FROM nginx:alpine AS builder
+
+# Instalar dependencias para compilar ModSecurity
+RUN apk add --no-cache \
+    build-base \
+    linux-headers \
+    pcre-dev \
+    zlib-dev \
+    openssl-dev \
+    libxml2-dev \
+    libtool \
+    git \
+    automake \
+    autoconf \
+    g++ \
+    make \
+    pcre \
+    pcre-dev \
+    libmaxminddb-dev \
+    yajl-dev \
+    lmdb-dev \
+    curl-dev \
+    libxml2-dev \
+    ssdeep-dev \
+    lua-dev \
+    geoip-dev
+
+# Clonar y compilar ModSecurity v3
+WORKDIR /tmp
+RUN git clone --depth 1 -b v3/master --single-branch https://github.com/SpiderLabs/ModSecurity
+WORKDIR /tmp/ModSecurity
+RUN git submodule init && git submodule update
+RUN ./build.sh && ./configure && make && make install
+
+# Clonar y compilar ModSecurity-nginx connector
+WORKDIR /tmp
+RUN git clone --depth 1 https://github.com/SpiderLabs/ModSecurity-nginx.git
+
+# Obtener versión de Nginx y descargar fuente
+RUN nginx_version=$(nginx -v 2>&1 | grep -oP '\d+\.\d+\.\d+') && \
+    wget http://nginx.org/download/nginx-${nginx_version}.tar.gz && \
+    tar xzf nginx-${nginx_version}.tar.gz
+
+# Compilar Nginx con ModSecurity
+WORKDIR /tmp/nginx-*
+RUN ./configure \
+    --with-compat \
+    --add-dynamic-module=../ModSecurity-nginx \
+    --prefix=/etc/nginx \
+    --sbin-path=/usr/sbin/nginx \
+    --modules-path=/usr/lib/nginx/modules \
+    --conf-path=/etc/nginx/nginx.conf \
+    --error-log-path=/var/log/nginx/error.log \
+    --http-log-path=/var/log/nginx/access.log \
+    --pid-path=/var/run/nginx.pid \
+    --lock-path=/var/run/nginx.lock \
+    --http-client-body-temp-path=/var/cache/nginx/client_temp \
+    --http-proxy-temp-path=/var/cache/nginx/proxy_temp \
+    --http-fastcgi-temp-path=/var/cache/nginx/fastcgi_temp \
+    --http-uwsgi-temp-path=/var/cache/nginx/uwsgi_temp \
+    --http-scgi-temp-path=/var/cache/nginx/scgi_temp \
+    --with-permissions=0777 \
+    --user=nginx \
+    --group=nginx \
+    --with-http_ssl_module \
+    --with-http_realip_module \
+    --with-http_addition_module \
+    --with-http_sub_module \
+    --with-http_dav_module \
+    --with-http_flv_module \
+    --with-http_mp4_module \
+    --with-http_gunzip_module \
+    --with-http_gzip_static_module \
+    --with-http_random_index_module \
+    --with-http_secure_link_module \
+    --with-http_stub_status_module \
+    --with-http_auth_request_module \
+    --with-http_xslt_module=dynamic \
+    --with-http_image_filter_module=dynamic \
+    --with-http_geoip_module=dynamic \
+    --with-threads \
+    --with-stream \
+    --with-stream_ssl_module \
+    --with-stream_ssl_preread_module \
+    --with-stream_realip_module \
+    --with-stream_geoip_module=dynamic \
+    --with-http_slice_module \
+    --with-file-aio \
+    --with-http_v2_module
+
+RUN make modules
+
+# Stage 2: Runtime
+FROM nginx:alpine
+
+# Copiar módulo ModSecurity compilado
+COPY --from=builder /tmp/nginx-*/objs/ngx_http_modsecurity_module.so /usr/lib/nginx/modules/
+
+# Copiar librerías de ModSecurity
+COPY --from=builder /usr/local/modsecurity/lib/libmodsecurity.so.3 /usr/lib/
+RUN ln -s /usr/lib/libmodsecurity.so.3 /usr/lib/libmodsecurity.so
+
+# Instalar dependencias runtime
+RUN apk add --no-cache \
+    wget \
+    curl \
+    openssl \
+    libstdc++ \
+    yajl \
+    lmdb \
+    curl \
+    libxml2 \
+    ssdeep \
+    lua \
+    geoip
+
+# Crear directorios
+RUN mkdir -p /var/log/nginx/modsec \
+    /etc/nginx/ssl \
+    /etc/nginx/modsec/rules
+
+# Cargar módulo ModSecurity en nginx.conf
+RUN echo "load_module /usr/lib/nginx/modules/ngx_http_modsecurity_module.so;" > /etc/nginx/modules-enabled/50-mod-http-modsecurity.conf
+
+# Copiar configuración
+COPY nginx.conf /etc/nginx/nginx.conf
+COPY modsec/main.conf /etc/nginx/modsec/main.conf
+COPY modsec/crs-setup.conf /etc/nginx/modsec/crs-setup.conf
+
+# Exponer puertos
+EXPOSE 80 8443
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost/health || exit 1
+
+CMD ["nginx", "-g", "daemon off;"]
+

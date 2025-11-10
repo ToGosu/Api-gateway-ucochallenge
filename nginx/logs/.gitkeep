@@ -1,0 +1,3 @@
+# Este archivo mantiene el directorio nginx/logs/ en git
+# Los logs se generan en tiempo de ejecución
+

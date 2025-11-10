@@ -5,34 +5,118 @@ spring:
   application:
     name: api-gateway
 
+  # ✅ Configuración de Redis para Rate Limiting
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+
   cloud:
     gateway:
+      # ✅ Configuración global de CORS
       globalcors:
         corsConfigurations:
           '[/**]':
-            allowedOrigins: "http://localhost:5173"
-            allowedMethods: "*"
+            allowedOrigins: 
+              - "http://localhost:5173"
+              - "http://localhost:3000"
+            allowedMethods: 
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - PATCH
+              - OPTIONS
             allowedHeaders: "*"
             allowCredentials: true
+            maxAge: 3600
 
+      # ✅ Rutas del API Gateway
       routes:
-        # Servicio de parámetros
+        # ================================================
+        # 1. SERVICIO DE USUARIOS (UcoChallenge Backend)
+        # ================================================
+        - id: user-service-users
+          uri: http://localhost:8080
+          predicates:
+            - Path=/api/v1/users,/api/v1/users/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+            - name: CircuitBreaker
+              args:
+                name: userServiceCircuitBreaker
+                fallbackUri: forward:/fallback/users
+            - RewritePath=/api/v1/users(?<segment>.*), /uco-challenge/api/v1/users$\{segment}
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
+            - AddResponseHeader=X-Gateway-Response, Success
+
+        # ================================================
+        # 2. SERVICIO DE CIUDADES
+        # ================================================
+        - id: user-service-cities
+          uri: http://localhost:8080
+          predicates:
+            - Path=/api/v1/cities,/api/v1/cities/**
+          filters:
+            - RewritePath=/api/v1/cities(?<segment>.*), /uco-challenge/api/v1/cities$\{segment}
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
+
+        # ================================================
+        # 3. SERVICIO DE TIPOS DE IDENTIFICACIÓN
+        # ================================================
+        - id: user-service-idtypes
+          uri: http://localhost:8080
+          predicates:
+            - Path=/api/v1/idtypes,/api/v1/idtypes/**
+          filters:
+            - RewritePath=/api/v1/idtypes(?<segment>.*), /uco-challenge/api/v1/idtypes$\{segment}
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
+
+        # ================================================
+        # 4. SERVICIO DE PARÁMETROS (Microservicio separado)
+        # ================================================
         - id: parameter-service
           uri: http://localhost:8082
           predicates:
             - Path=/parameters/**
           filters:
-            - RewritePath=/parameters/(?<segment>.*), /parameters/${segment}
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
 
-        # Servicio de usuarios (UcoChallenge)
-        - id: user-service
-          uri: http://localhost:8080
+        # ================================================
+        # 5. SERVICIO DE NOTIFICACIONES (Microservicio separado)
+        # ================================================
+        - id: notification-service
+          uri: http://localhost:8083
           predicates:
-            - Path=/api/**
+            - Path=/notifications/**
           filters:
-            # 🔁 Reescribe /api/... → /uco-challenge/api/...
-            - RewritePath=/api/(?<segment>.*), /uco-challenge/api/${segment}
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
 
+        # ================================================
+        # 6. ACTUATOR (Health Check)
+        # ================================================
+        - id: actuator-route
+          uri: http://localhost:8090
+          predicates:
+            - Path=/actuator/**
+          filters:
+            - SetStatus=200
+
+  # ✅ Configuración de OAuth2 con Auth0
   security:
     oauth2:
       resourceserver:
@@ -40,3 +124,47 @@ spring:
           issuer-uri: https://dev-l7bs34cafn0six34.us.auth0.com/
           audiences:
             - https://ucochallenge-api/
+
+# ================================================
+# OPEN TELEMETRY CONFIGURATION
+# ================================================
+otel:
+  service:
+    name: ${OTEL_SERVICE_NAME:api-gateway}
+    version: 0.0.1-SNAPSHOT
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://localhost:4317}
+      protocol: ${OTEL_EXPORTER_OTLP_PROTOCOL:grpc}
+
+# ================================================
+# CONFIGURACIÓN DE ACTUATOR (Monitoreo, Métricas y Tracing)
+# ================================================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,gateway
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+  tracing:
+    sampling:
+      probability: 1.0
+
+# ================================================
+# LOGGING (para debugging)
+# ================================================
+logging:
+  level:
+    root: INFO
+    org.springframework.cloud.gateway: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.web.cors: DEBUG
+    io.opentelemetry: INFO

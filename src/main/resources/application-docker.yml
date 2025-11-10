@@ -1,0 +1,69 @@
+# Configuración específica para Docker
+# Este perfil se activa cuando SPRING_PROFILES_ACTIVE=docker
+
+spring:
+  cloud:
+    gateway:
+      routes:
+        # ================================================
+        # RUTAS CONFIGURADAS PARA DOCKER
+        # Los servicios backend deben estar en la misma red Docker
+        # ================================================
+        - id: user-service-users
+          uri: http://user-service:8080  # Ajustar según el nombre del servicio en docker-compose
+          predicates:
+            - Path=/api/v1/users,/api/v1/users/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 10
+                redis-rate-limiter.burstCapacity: 20
+                redis-rate-limiter.requestedTokens: 1
+            - name: CircuitBreaker
+              args:
+                name: userServiceCircuitBreaker
+                fallbackUri: forward:/fallback/users
+            - RewritePath=/api/v1/users(?<segment>.*), /uco-challenge/api/v1/users$\{segment}
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
+            - AddResponseHeader=X-Gateway-Response, Success
+
+        - id: user-service-cities
+          uri: http://user-service:8080
+          predicates:
+            - Path=/api/v1/cities,/api/v1/cities/**
+          filters:
+            - RewritePath=/api/v1/cities(?<segment>.*), /uco-challenge/api/v1/cities$\{segment}
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
+
+        - id: user-service-idtypes
+          uri: http://user-service:8080
+          predicates:
+            - Path=/api/v1/idtypes,/api/v1/idtypes/**
+          filters:
+            - RewritePath=/api/v1/idtypes(?<segment>.*), /uco-challenge/api/v1/idtypes$\{segment}
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
+
+        - id: parameter-service
+          uri: http://parameter-service:8082
+          predicates:
+            - Path=/parameters/**
+          filters:
+            - name: RequestRateLimiter
+              args:
+                redis-rate-limiter.replenishRate: 20
+                redis-rate-limiter.burstCapacity: 40
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
+
+        - id: notification-service
+          uri: http://notification-service:8083
+          predicates:
+            - Path=/notifications/**
+          filters:
+            - AddRequestHeader=X-Gateway-Source, API-Gateway
+
+# Configuración de Redis para Docker
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:redis}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+

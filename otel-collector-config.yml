@@ -1,0 +1,69 @@
+# Configuración de OpenTelemetry Collector
+# Recibe traces, metrics y logs y los exporta a Jaeger, Prometheus, etc.
+
+receivers:
+  # Receptor OTLP (gRPC)
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Receptor para métricas de Prometheus
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'api-gateway'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['api-gateway:8090']
+
+processors:
+  # Procesador de batch para agrupar datos
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+
+  # Procesador de recursos para agregar atributos
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: development
+        action: upsert
+
+exporters:
+  # Exportar traces a Jaeger
+  jaeger:
+    endpoint: jaeger:14250
+    tls:
+      insecure: true
+
+  # Exportar logs a la consola (para debugging)
+  logging:
+    loglevel: info
+
+  # Exportar métricas a Prometheus (opcional)
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+
+service:
+  pipelines:
+    # Pipeline de traces
+    traces:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [jaeger, logging]
+
+    # Pipeline de métricas
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [batch, resource]
+      exporters: [logging, prometheus]
+
+    # Pipeline de logs
+    logs:
+      receivers: [otlp]
+      processors: [batch, resource]
+      exporters: [logging]
+

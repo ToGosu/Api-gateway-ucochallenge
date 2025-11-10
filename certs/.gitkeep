@@ -1,0 +1,3 @@
+# Este archivo mantiene el directorio certs/ en git
+# Los certificados SSL generados (server.key, server.crt) no se committean
+
