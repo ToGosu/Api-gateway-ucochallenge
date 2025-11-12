@@ -10,7 +10,7 @@ spring:
         # Los servicios backend deben estar en la misma red Docker
         # ================================================
         - id: user-service-users
-          uri: http://user-service:8080  # Ajustar según el nombre del servicio en docker-compose
+          uri: http://app:8080  # Nombre del servicio en docker-compose
           predicates:
             - Path=/api/v1/users,/api/v1/users/**
           filters:
@@ -28,7 +28,7 @@ spring:
             - AddResponseHeader=X-Gateway-Response, Success
 
         - id: user-service-cities
-          uri: http://user-service:8080
+          uri: http://app:8080
           predicates:
             - Path=/api/v1/cities,/api/v1/cities/**
           filters:
@@ -36,7 +36,7 @@ spring:
             - AddRequestHeader=X-Gateway-Source, API-Gateway
 
         - id: user-service-idtypes
-          uri: http://user-service:8080
+          uri: http://app:8080
           predicates:
             - Path=/api/v1/idtypes,/api/v1/idtypes/**
           filters:
@@ -44,20 +44,21 @@ spring:
             - AddRequestHeader=X-Gateway-Source, API-Gateway
 
         - id: parameter-service
-          uri: http://parameter-service:8082
+          uri: http://catalog-service:8082
           predicates:
-            - Path=/parameters/**
+            - Path=/parameters/**,/catalog/api/v1/parameters/**
           filters:
             - name: RequestRateLimiter
               args:
                 redis-rate-limiter.replenishRate: 20
                 redis-rate-limiter.burstCapacity: 40
+            - RewritePath=/parameters(?<segment>.*), /catalog/api/v1/parameters$\{segment}
             - AddRequestHeader=X-Gateway-Source, API-Gateway
 
-        - id: notification-service
-          uri: http://notification-service:8083
+        - id: catalog-service
+          uri: http://catalog-service:8082
           predicates:
-            - Path=/notifications/**
+            - Path=/catalog/**
           filters:
             - AddRequestHeader=X-Gateway-Source, API-Gateway
 
